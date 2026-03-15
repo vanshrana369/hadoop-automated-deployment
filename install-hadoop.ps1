@@ -1460,7 +1460,11 @@ Write-Host "  If this installer saved you time, please star the repo on GitHub!"
 Write-Host ""
 Write-Host "    https://github.com/vanshrana369/hadoop-automated-deployment" -ForegroundColor Cyan
 Write-Host ""
-Write-Host "  Your star helps others find this tool. Thank you!" -ForegroundColor Yellow
+Write-Host "  Press S to open the repo in your browser, or any other key to skip." -ForegroundColor Gray
 Write-Host "  ======================================================================" -ForegroundColor DarkGray
 Write-Host ""
+$key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+if ($key.Character -eq 's' -or $key.Character -eq 'S') {
+    Start-Process "https://github.com/vanshrana369/hadoop-automated-deployment"
+}
 Write-Host ""
