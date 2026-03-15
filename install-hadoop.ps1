@@ -1449,4 +1449,18 @@ catch {
     Write-Warn "Could not run hadoop version: $_"
     Write-Warn "Open a NEW Command Prompt and run: hadoop version"
 }
+
+# ============================================================================
+#  STAR ON GITHUB
+# ============================================================================
+
+Write-Host ""
+Write-Host "  ======================================================================" -ForegroundColor DarkGray
+Write-Host "  If this installer saved you time, please star the repo on GitHub!" -ForegroundColor Yellow
+Write-Host ""
+Write-Host "    https://github.com/vanshrana369/hadoop-automated-deployment" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  Your star helps others find this tool. Thank you!" -ForegroundColor Yellow
+Write-Host "  ======================================================================" -ForegroundColor DarkGray
+Write-Host ""
 Write-Host ""
