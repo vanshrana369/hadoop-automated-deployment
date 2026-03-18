@@ -652,7 +652,7 @@ if ($doDownload) {
     }
     
     $extractTemp = "$TEMP_DIR\hadoop-extract"
-    if (Test-Path $extractTemp) { Remove-Item $extractTemp -Recurse -Force }
+    if (Test-Path $extractTemp) { cmd /c rmdir /s /q "$extractTemp" }
     New-Item -ItemType Directory -Path $extractTemp -Force | Out-Null
     
     $extracted = $false
@@ -671,7 +671,7 @@ if ($doDownload) {
         else {
             Write-Warn "    tar.exe extraction failed or was incomplete. Trying 7-Zip fallback..."
             # Clean up partial extraction
-            Remove-Item $extractTemp -Recurse -Force -ErrorAction SilentlyContinue
+            cmd /c rmdir /s /q "$extractTemp" 2>$null
             New-Item -ItemType Directory -Path $extractTemp -Force | Out-Null
         }
     }
@@ -739,12 +739,12 @@ if ($doDownload) {
             # robocopy exit codes: 0-7 = success, 8+ = error
             if ($LASTEXITCODE -le 7) {
                 # Clean up the (now mostly empty) temp extraction folder
-                Remove-Item $extractTemp -Recurse -Force -ErrorAction SilentlyContinue
+                cmd /c rmdir /s /q "$extractTemp" 2>$null
                 Write-Success "Hadoop extracted to $INSTALL_DIR"
             }
             else {
                 Write-Warn "robocopy reported issues (exit code $LASTEXITCODE), but files may still be usable."
-                Remove-Item $extractTemp -Recurse -Force -ErrorAction SilentlyContinue
+                cmd /c rmdir /s /q "$extractTemp" 2>$null
                 Write-Success "Hadoop extracted to $INSTALL_DIR (with warnings)"
             }
         }
