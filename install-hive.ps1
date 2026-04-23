@@ -336,7 +336,7 @@ if ($doDownload) {
     Write-Step "1.1" "Downloading Apache Hive $HIVE_VERSION (this is ~230MB, please wait)..."
     $hiveTarGz = "$TEMP_DIR\apache-hive-$HIVE_VERSION-bin.tar.gz"
 
-    $minHiveBytes = 100MB
+    $minHiveBytes = 310MB
     if (Test-Path $hiveTarGz) {
         $archiveSize = (Get-Item $hiveTarGz).Length
         if ($archiveSize -ge $minHiveBytes) {
