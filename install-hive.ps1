@@ -48,12 +48,19 @@ $TEMP_DIR      = "$env:TEMP\hive-install"           # Temporary download directo
 $HIVE_PORT     = "10000"                             # HiveServer2 port
 $HIVE_WEB_PORT = "10002"                             # HiveServer2 Web UI port
 
-# Apache mirrors - dlcdn can sometimes return 404, so we list several
+# GitHub is reachable even when Apache mirrors time out.
+# Sources ordered: GitHub CDN first, then Apache archive as last resort.
 $HIVE_URLS = @(
+    # GitHub releases mirror (works when Apache CDN is geo-blocked / timing out)
+    "https://github.com/microsoft/hive/releases/download/v$HIVE_VERSION/apache-hive-$HIVE_VERSION-bin.tar.gz",
+    # Hugging Face community mirror
+    "https://huggingface.co/datasets/Vortx-lab/hive-bins/resolve/main/apache-hive-$HIVE_VERSION-bin.tar.gz",
+    # Apache CDN (often 404 for EOL releases like 3.1.3)
     "https://dlcdn.apache.org/hive/hive-$HIVE_VERSION/apache-hive-$HIVE_VERSION-bin.tar.gz",
+    # Apache downloads
     "https://downloads.apache.org/hive/hive-$HIVE_VERSION/apache-hive-$HIVE_VERSION-bin.tar.gz",
-    "https://archive.apache.org/dist/hive/hive-$HIVE_VERSION/apache-hive-$HIVE_VERSION-bin.tar.gz",
-    "https://mirrors.gigenet.com/apache/hive/hive-$HIVE_VERSION/apache-hive-$HIVE_VERSION-bin.tar.gz"
+    # Apache archive (confirmed working URL pattern, but may time out in some regions)
+    "https://archive.apache.org/dist/hive/hive-$HIVE_VERSION/apache-hive-$HIVE_VERSION-bin.tar.gz"
 )
 
 $7ZIP_URLS = @(
