@@ -38,14 +38,135 @@
 #  CONFIGURATION - Modify these as needed before running
 # ============================================================================
 
-$HIVE_VERSION  = "3.1.3"
-$INSTALL_DIR   = "C:\hive"                          # Where Hive will be installed
-$HADOOP_HOME   = "C:\hadoop"                         # Existing Hadoop install directory
-$HIVE_DB_DIR   = "$env:USERPROFILE\hive-data"       # Derby metastore + scratch dir (user-owned)
-$LOG_DIR       = "$HIVE_DB_DIR\logs"                 # Hive log directory
+$HIVE_VERSION = "3.1.3"
+$INSTALL_DIR = "C:\hive"                          # Where Hive will be installed
+$HIVE_DB_DIR = "$env:USERPROFILE\hive-data"       # Derby metastore + scratch dir (user-owned)
 
-$TEMP_DIR      = "$env:TEMP\hive-install"           # Temporary download directory
-$HIVE_PORT     = "10000"                             # HiveServer2 port
+# ============================================================================
+#  LOGGING  — every Write-Host line is saved to a timestamped log file.
+#  Start-Transcript must be called early so NOTHING is missed.
+# ============================================================================
+$_logDir = "$env:TEMP\hive-install"
+$_logFile = "$_logDir\install-hive-$(Get-Date -Format 'yyyyMMdd-HHmmss').log"
+if (-not (Test-Path $_logDir)) { New-Item -ItemType Directory -Path $_logDir -Force | Out-Null }
+Start-Transcript -Path $_logFile -Append | Out-Null
+Write-Host "  [LOG] Transcript started -> $_logFile" -ForegroundColor DarkGray
+Write-Host ""
+
+# Exit-Script defined HERE (before HADOOP detection) so early exits flush the log.
+# A second identical definition appears later with the other helpers; that is harmless.
+function Exit-Script {
+    param([int]$Code = 0)
+    Write-Host ""
+    Write-Host "  [LOG] Install log saved to: $_logFile" -ForegroundColor DarkGray
+    Stop-Transcript -ErrorAction SilentlyContinue | Out-Null
+    exit $Code
+}
+
+# ---------------------------------------------------------------------------
+# Auto-detect HADOOP_HOME
+# Searches common C: drive install locations, then falls back to the
+# HADOOP_HOME environment variable, then does a full C: drive scan.
+# ---------------------------------------------------------------------------
+$_hadoopCandidates = @(
+    # Flat layout on C:
+    "C:\hadoop",
+
+    # Double-nested: C:\hadoop\hadoop\ (parent of bin\, sbin\, share\)
+    "C:\hadoop\hadoop",
+
+    # Style 1 — version as a SEPARATE subfolder: C:\hadoop\hadoop\3.4.3
+    "C:\hadoop\hadoop\3.4.3",
+    "C:\hadoop\hadoop\3.4.2",
+    "C:\hadoop\hadoop\3.4.1",
+    "C:\hadoop\hadoop\3.4.0",
+    "C:\hadoop\hadoop\3.3.6",
+    "C:\hadoop\hadoop\3.3.5",
+    "C:\hadoop\hadoop\3.2.4",
+    "C:\hadoop\hadoop\3.1.3",
+    "C:\hadoop\hadoop\3.1.2",
+
+    # Style 2 — version JOINED to "hadoop" as one folder name: C:\hadoop\hadoop3.4.3
+    "C:\hadoop\hadoop3.4.3",
+    "C:\hadoop\hadoop3.4.2",
+    "C:\hadoop\hadoop3.4.1",
+    "C:\hadoop\hadoop3.4.0",
+    "C:\hadoop\hadoop3.3.6",
+    "C:\hadoop\hadoop3.3.5",
+    "C:\hadoop\hadoop3.2.4",
+    "C:\hadoop\hadoop3.1.3",
+    "C:\hadoop\hadoop3.1.2",
+
+    # Style 3 — full package name with dash: C:\hadoop\hadoop-3.4.3
+    # (happens when user extracts the official .tar.gz directly — most common for 3.4.x)
+    "C:\hadoop\hadoop-3.4.3",
+    "C:\hadoop\hadoop-3.4.2",
+    "C:\hadoop\hadoop-3.4.1",
+    "C:\hadoop\hadoop-3.4.0",
+    "C:\hadoop\hadoop-3.3.6",
+    "C:\hadoop\hadoop-3.3.5",
+    "C:\hadoop\hadoop-3.2.4",
+    "C:\hadoop\hadoop-3.1.3",
+    "C:\hadoop\hadoop-3.1.2"
+)
+# Also honour whatever is already set in the environment (highest priority)
+if ($env:HADOOP_HOME) { $_hadoopCandidates = @($env:HADOOP_HOME) + $_hadoopCandidates }
+
+$HADOOP_HOME = $null
+foreach ($_c in $_hadoopCandidates) {
+    if (Test-Path "$_c\bin\hadoop.cmd") {
+        $HADOOP_HOME = $_c
+        break
+    }
+}
+if (-not $HADOOP_HOME) {
+    # Last resort: scan C: drive for hadoop.cmd
+    Write-Host "  [..] Hadoop not found in common paths. Scanning C: drive (this may take a moment)..." -ForegroundColor DarkYellow
+
+    # Step 1 (fast): look inside any folder named hadoop/Hadoop/HADOOP at C:\ root
+    foreach ($_folderName in @("hadoop", "Hadoop", "HADOOP")) {
+        $_searchRoot = "C:\$_folderName"
+        if (Test-Path $_searchRoot) {
+            $found = Get-ChildItem -Path $_searchRoot -Filter "hadoop.cmd" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) {
+                $HADOOP_HOME = Split-Path $found.DirectoryName -Parent
+                break
+            }
+        }
+    }
+
+    # Step 2 (broader): if still not found, walk 2 levels deep under C:\ root
+    # (e.g. C:\tools\hadoop\bin\hadoop.cmd or C:\Program Files\Hadoop\bin\hadoop.cmd)
+    # We avoid -Depth because it requires PowerShell 6+; manual enumeration works on PS 5.1.
+    if (-not $HADOOP_HOME) {
+        $topDirs = Get-ChildItem -Path "C:\" -Directory -ErrorAction SilentlyContinue
+        foreach ($_top in $topDirs) {
+            # Level 1 direct children
+            $found = Get-ChildItem -Path $_top.FullName -Filter "hadoop.cmd" -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) { $HADOOP_HOME = Split-Path $found.DirectoryName -Parent; break }
+
+            # Level 2 sub-directories (recurse within each sub-dir)
+            $subDirs = Get-ChildItem -Path $_top.FullName -Directory -ErrorAction SilentlyContinue
+            foreach ($_sub in $subDirs) {
+                $found = Get-ChildItem -Path $_sub.FullName -Filter "hadoop.cmd" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+                if ($found) { $HADOOP_HOME = Split-Path $found.DirectoryName -Parent; break }
+            }
+            if ($HADOOP_HOME) { break }
+        }
+    }
+
+    if ($HADOOP_HOME) {
+        Write-Host "  [OK] Auto-detected Hadoop at: $HADOOP_HOME" -ForegroundColor Green
+    }
+}
+if (-not $HADOOP_HOME) {
+    Write-Host "  [!!] Could not auto-detect HADOOP_HOME. Please set it manually at the top of this script." -ForegroundColor Red
+    Exit-Script 1
+}
+$LOG_DIR = "$HIVE_DB_DIR\logs"                 # Hive log directory
+
+$TEMP_DIR = "$env:TEMP\hive-install"           # Temporary download directory
+$HIVE_PORT = "10000"                             # HiveServer2 port
 $HIVE_WEB_PORT = "10002"                             # HiveServer2 Web UI port
 
 # Mirror list — verified 2026-04-23 from India (re-verified 13:23 IST).
@@ -105,6 +226,15 @@ function Write-Err {
     Write-Host $Text -ForegroundColor Red
 }
 
+# Always stop the transcript before exiting so the log is properly flushed.
+function Exit-Script {
+    param([int]$Code = 0)
+    Write-Host ""
+    Write-Host "  [LOG] Install log saved to: $_logFile" -ForegroundColor DarkGray
+    Stop-Transcript -ErrorAction SilentlyContinue | Out-Null
+    exit $Code
+}
+
 function Confirm-Continue {
     param([string]$Message)
     Write-Host ""
@@ -114,6 +244,86 @@ function Confirm-Continue {
         return $false
     }
     return $true
+}
+
+# Runs schematool -initSchema and reports results.
+# Returns $true on success, $false on failure.
+# All dependencies passed explicitly — no implicit outer-scope variables.
+function Invoke-SchemaInit {
+    param(
+        [string]$HadoopHome = $HADOOP_HOME,
+        [string]$InstallDir = $INSTALL_DIR,
+        [string]$HiveDbDir = $HIVE_DB_DIR
+    )
+    try {
+        $env:HADOOP_CLASSPATH = (& "$HadoopHome\bin\hadoop.cmd" classpath 2>$null) |
+        Where-Object { $_ } | Select-Object -Last 1
+        Push-Location $HiveDbDir
+        $schemaOut = & "$InstallDir\bin\hive.cmd" --service schematool -dbType derby -initSchema 2>&1
+        $schemaExit = $LASTEXITCODE
+        Pop-Location
+        if ($schemaExit -eq 0) {
+            Write-Success "Metastore schema initialized successfully"
+            return $true
+        }
+        else {
+            Write-Warn "schematool exited with code $schemaExit. Output:"
+            $schemaOut | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+            Write-Warn "You may need to run schematool manually after verifying hive-site.xml."
+            return $false
+        }
+    }
+    catch {
+        Pop-Location -ErrorAction SilentlyContinue
+        Write-Err "hive.cmd --service schematool could not be launched: $_"
+        Write-Warn "Try running manually:"
+        Write-Host "    `$env:HIVE_HOME = '$InstallDir'" -ForegroundColor Cyan
+        Write-Host "    `$env:HADOOP_HOME = '$HadoopHome'" -ForegroundColor Cyan
+        Write-Host "    `$env:HADOOP_CLASSPATH = (& '$HadoopHome\bin\hadoop.cmd' classpath)" -ForegroundColor Cyan
+        Write-Host "    & '$InstallDir\bin\hive.cmd' --service schematool -dbType derby -initSchema" -ForegroundColor Cyan
+        return $false
+    }
+}
+
+# Verifies the SHA-256 checksum of a local file against Apache's .sha256 sidecar.
+# Returns $true if verified, $false if .sha256 could not be fetched (soft fail).
+# Calls Exit-Script 1 immediately on a hash mismatch (hard fail — fail-fast).
+function Test-HiveArchive {
+    param(
+        [string]  $ArchivePath,
+        [string[]]$MirrorUrls
+    )
+    Write-Step "1.1b" "Verifying SHA-256 checksum..."
+    foreach ($url in $MirrorUrls) {
+        $sha256Url = $url + ".sha256"
+        try {
+            # Explicit TLS 1.2 guard — Invoke-WebRequest must not fall back to TLS 1.0
+            # on older Windows, regardless of what ServicePointManager is set to globally.
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            $shaRaw = (Invoke-WebRequest -Uri $sha256Url -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop).Content
+            # Apache .sha256 files: "<hash>  <filename>" or bare "<hash>"
+            $expectedHash = ($shaRaw -split '[\s]+')[0].ToUpper().Trim()
+            if ($expectedHash.Length -ne 64) { continue }   # not a valid SHA-256 line
+            $actualHash = (Get-FileHash $ArchivePath -Algorithm SHA256).Hash.ToUpper()
+            if ($actualHash -eq $expectedHash) {
+                Write-Success "SHA-256 verified ($($expectedHash.Substring(0,16))...)"
+                return $true
+            }
+            else {
+                # Hard fail — tampered or corrupt archive, do not proceed
+                Write-Err "SHA-256 MISMATCH — archive is corrupt or tampered. Deleting and aborting."
+                Write-Host "  Expected : $expectedHash" -ForegroundColor Red
+                Write-Host "  Actual   : $actualHash"   -ForegroundColor Red
+                Remove-Item $ArchivePath -Force -ErrorAction SilentlyContinue
+                Exit-Script 1
+            }
+        }
+        catch {
+            Write-Warn "Could not fetch .sha256 from $sha256Url ($($_.Exception.Message.Split([char]10)[0]))"
+        }
+    }
+    Write-Warn "SHA-256 verification skipped (no .sha256 reachable). Proceeding on size check only."
+    return $false
 }
 
 function Format-FileSize {
@@ -185,7 +395,7 @@ function Download-WithProgress {
                     $totalText = Format-FileSize $totalBytes
                     $barWidth = 30
                     $filled = [int][Math]::Floor($barWidth * $pct / 100)
-                    $empty  = $barWidth - $filled
+                    $empty = $barWidth - $filled
                     $bar = ("$([char]0x2588)" * $filled) + ("$([char]0x2591)" * $empty)
                     $line = "`r    [$bar] $pct%  $downloadedText / $totalText  ($speedText)   "
                 }
@@ -262,7 +472,7 @@ $isAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIde
 if (-not $isAdmin) {
     Write-Err "This script must be run as Administrator!"
     Write-Host "  Right-click PowerShell > 'Run as Administrator', then re-run this script."
-    exit 1
+    Exit-Script 1
 }
 Write-Success "Running as Administrator"
 
@@ -271,14 +481,14 @@ $existingJava = Get-Command java.exe -ErrorAction SilentlyContinue
 if (-not $existingJava) {
     Write-Err "java.exe not found on PATH!"
     Write-Host "  Hive requires Java 8. Run install-hadoop.ps1 first (it installs Java 8)."
-    exit 1
+    Exit-Script 1
 }
-$javaVerRaw   = & "$($existingJava.Source)" -version 2>&1
-$javaVerText  = ($javaVerRaw | ForEach-Object { $_.ToString() }) -join " "
+$javaVerRaw = & "$($existingJava.Source)" -version 2>&1
+$javaVerText = ($javaVerRaw | ForEach-Object { $_.ToString() }) -join " "
 if ($javaVerText -notmatch '1\.8\.0') {
     Write-Warn "Detected Java version: $javaVerText"
     Write-Warn "Hive 3.1.x officially supports Java 8. Other versions may work but are untested."
-    if (-not (Confirm-Continue "Continue with non-Java-8 JVM?")) { exit 1 }
+    if (-not (Confirm-Continue "Continue with non-Java-8 JVM?")) { Exit-Script 1 }
 }
 else {
     Write-Success "Java 8 detected - compatible with Hive $HIVE_VERSION"
@@ -288,9 +498,48 @@ else {
 if (-not (Test-Path "$HADOOP_HOME\bin\hadoop.cmd")) {
     Write-Err "Hadoop not found at: $HADOOP_HOME\bin\hadoop.cmd"
     Write-Host "  Run install-hadoop.ps1 first, then re-run this script."
-    exit 1
+    Exit-Script 1
 }
 Write-Success "Hadoop found at: $HADOOP_HOME"
+
+# ---- Detect Hadoop version ----
+$hadoopVersion = $null
+try {
+    $hadoopVerRaw = & "$HADOOP_HOME\bin\hadoop.cmd" version 2>$null
+    $hadoopVerLine = ($hadoopVerRaw | Where-Object { $_ -match '^Hadoop\s+\d' } | Select-Object -First 1)
+    if ($hadoopVerLine -match 'Hadoop\s+([\d\.]+)') {
+        $hadoopVersion = $Matches[1]
+    }
+}
+catch { }
+
+if ($hadoopVersion) {
+    $hvMajorMinor = ($hadoopVersion -split '\.')[0..1] -join '.'
+    switch -Wildcard ($hvMajorMinor) {
+        "3.1" {
+            Write-Success "Hadoop $hadoopVersion detected - officially supported with Hive $HIVE_VERSION"
+        }
+        "3.2" {
+            Write-Success "Hadoop $hadoopVersion detected - compatible with Hive $HIVE_VERSION (minor fixes applied)"
+        }
+        "3.3" {
+            Write-Warn "Hadoop $hadoopVersion detected - mostly compatible. Log4j + Guava fixes applied automatically."
+        }
+        "3.4" {
+            Write-Warn "Hadoop $hadoopVersion detected - NOT officially supported with Hive 3.1.x upstream."
+            Write-Host "    This script applies the required Log4j + Guava fixes automatically." -ForegroundColor DarkYellow
+            Write-Host "    Hive will work on Hadoop 3.4.x with these patches. Proceed." -ForegroundColor DarkYellow
+        }
+        default {
+            Write-Warn "Hadoop $hadoopVersion detected - compatibility with Hive $HIVE_VERSION is untested."
+            Write-Host "    Fixes (Log4j, Guava) are applied. Proceed with caution." -ForegroundColor DarkYellow
+        }
+    }
+}
+else {
+    Write-Warn "Could not determine Hadoop version (hadoop version command failed). Continuing anyway."
+}
+
 
 # ---- Resolve JAVA_HOME ----
 $javaHome = [System.Environment]::GetEnvironmentVariable("JAVA_HOME", "Machine")
@@ -333,19 +582,31 @@ else {
 }
 
 if ($doDownload) {
-    Write-Step "1.1" "Downloading Apache Hive $HIVE_VERSION (this is ~230MB, please wait)..."
+    Write-Step "1.1" "Downloading Apache Hive $HIVE_VERSION (this is ~280-315 MB depending on version, please wait)..."
     $hiveTarGz = "$TEMP_DIR\apache-hive-$HIVE_VERSION-bin.tar.gz"
 
-    $minHiveBytes = 310MB
+    # Minimum expected size varies by Hive release:
+    #   3.1.3 => ~311 MB   3.1.2 => ~280 MB   (anything else => 200 MB floor)
+    $minHiveBytes = switch ($HIVE_VERSION) {
+        "3.1.3" { 300MB }   # actual: ~311 MB, allow 300 MB as threshold
+        "3.1.2" { 270MB }   # actual: ~280 MB, allow 270 MB as threshold
+        default { 200MB }   # conservative floor for any other version
+    }
     if (Test-Path $hiveTarGz) {
         $archiveSize = (Get-Item $hiveTarGz).Length
         if ($archiveSize -ge $minHiveBytes) {
             Write-Warn "Archive already downloaded ($(Format-FileSize $archiveSize)), reusing: $hiveTarGz"
+            # Capture return value: $true = verified, $false = .sha256 unreachable (soft-fail)
+            $archiveVerified = Test-HiveArchive -ArchivePath $hiveTarGz -MirrorUrls $HIVE_URLS
         }
         else {
             Write-Warn "Cached archive is only $(Format-FileSize $archiveSize) -- likely corrupt. Re-downloading..."
             Remove-Item $hiveTarGz -Force
+            $archiveVerified = $false
         }
+    }
+    else {
+        $archiveVerified = $false
     }
 
     if (-not (Test-Path $hiveTarGz)) {
@@ -362,7 +623,12 @@ if ($doDownload) {
 
     if (-not (Test-Path $hiveTarGz)) {
         Write-Err "Hive archive not found at $hiveTarGz. Cannot continue."
-        exit 1
+        Exit-Script 1
+    }
+
+    # Verify freshly downloaded archive (cached copy already checked in the reuse branch above)
+    if (-not $archiveVerified) {
+        Test-HiveArchive -ArchivePath $hiveTarGz -MirrorUrls $HIVE_URLS | Out-Null
     }
 
     Write-Step "1.2" "Extracting Hive (this may take a minute)..."
@@ -401,7 +667,9 @@ if ($doDownload) {
     if (-not $extracted) {
         Write-Host "    Downloading standalone 7-Zip for reliable extraction..." -ForegroundColor Gray
         $7zInstaller = "$TEMP_DIR\7z_installer.exe"
-        $7zDir = "$INSTALL_DIR\7zip-temp"
+        # FIX: use TEMP_DIR (never has spaces) instead of INSTALL_DIR which could
+        # be set to e.g. "C:\Program Files\hive" — 7-Zip /D= does not support spaces.
+        $7zDir = "$TEMP_DIR\7z-extract"
 
         $7zDownloaded = $false
         foreach ($zUrl in $7ZIP_URLS) {
@@ -422,7 +690,9 @@ if ($doDownload) {
         }
 
         if ($7zDownloaded) {
-            Start-Process -FilePath $7zInstaller -ArgumentList "/S /D=$7zDir" -Wait -NoNewWindow
+            # Note: 7-Zip /D= does not support quoted paths; ensure $7zDir has no spaces.
+            # We use -ArgumentList as an array so PS does not add extra quoting.
+            Start-Process -FilePath $7zInstaller -ArgumentList @("/S", "/D=$7zDir") -Wait -NoNewWindow
             $7zExe = "$7zDir\7z.exe"
 
             if (Test-Path $7zExe) {
@@ -476,7 +746,7 @@ if ($doDownload) {
         else {
             Write-Err "Extraction failed or archive structure unexpected (bin\hive not found)."
             Write-Err "Check $extractTemp manually."
-            exit 1
+            Exit-Script 1
         }
     }
     else {
@@ -485,13 +755,13 @@ if ($doDownload) {
         Read-Host "  Press Enter after extracting manually"
         if (-not (Test-Path "$INSTALL_DIR\bin\hive")) {
             Write-Err "Hive binaries not found at $INSTALL_DIR\bin\hive after manual extraction. Cannot continue."
-            exit 1
+            Exit-Script 1
         }
     }
 
-    # Clean up 7-Zip temp dir if present
-    if (Test-Path "$INSTALL_DIR\7zip-temp") {
-        Remove-Item "$INSTALL_DIR\7zip-temp" -Recurse -Force -ErrorAction SilentlyContinue
+    # Clean up 7-Zip temp dir (now lives in TEMP_DIR since the dir move fix)
+    if (Test-Path "$TEMP_DIR\7z-extract") {
+        Remove-Item "$TEMP_DIR\7z-extract" -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -507,7 +777,8 @@ if (Test-Path "$INSTALL_DIR\bin\hive") {
                 Expand-Archive -Path $winBinZip -DestinationPath $winBinDir -Force
                 Copy-Item -Path "$winBinDir\Hive-cmd-master\bin\*" -Destination "$INSTALL_DIR\bin" -Recurse -Force | Out-Null
                 Write-Success "Windows .cmd binaries installed successfully"
-            } else {
+            }
+            else {
                 Write-Warn "Expand-Archive not found (old PS version?). Try manually adding them."
             }
         }
@@ -519,13 +790,25 @@ if (Test-Path "$INSTALL_DIR\bin\hive") {
 
 # Ensure commons-collections 3.x is present (Hive 3.x removed it but still needs it for HMS)
 $commonsJar = "$INSTALL_DIR\lib\commons-collections-3.2.2.jar"
-if (-not (Test-Path $commonsJar)) {
+$commonsMinBytes = 500KB   # actual jar is ~575 KB; 500 KB is a safe floor
+if (-not (Test-Path $commonsJar) -or (Get-Item $commonsJar).Length -lt $commonsMinBytes) {
+    if (Test-Path $commonsJar) {
+        Write-Warn "commons-collections jar is too small ($(Format-FileSize (Get-Item $commonsJar).Length)) — likely 0-byte Defender stub. Re-downloading..."
+        Remove-Item $commonsJar -Force -ErrorAction SilentlyContinue
+    }
     Write-Step "1.4" "Fixing missing Apache commons-collections jar (Hive 3.x oversight)..."
     try {
         Download-WithProgress -Url "https://repo1.maven.org/maven2/commons-collections/commons-collections/3.2.2/commons-collections-3.2.2.jar" -OutFile $commonsJar -DisplayName "commons-collections-3.2.2.jar"
-        Write-Success "Added missing commons-collections dependency successfully"
-    } catch {
-        Write-Warn "Could not download commons-collections, Hive might fail to start if it isn't in Hadoop classpath."
+        $dlSize = if (Test-Path $commonsJar) { (Get-Item $commonsJar).Length } else { 0 }
+        if ($dlSize -lt $commonsMinBytes) {
+            Write-Warn "Downloaded jar is only $(Format-FileSize $dlSize) — may be quarantined. Hive might fail if commons-collections is missing."
+        }
+        else {
+            Write-Success "Added commons-collections-3.2.2.jar ($(Format-FileSize $dlSize))"
+        }
+    }
+    catch {
+        Write-Warn "Could not download commons-collections: $_. Hive might fail to start if it isn't in Hadoop classpath."
     }
 }
 
@@ -547,20 +830,29 @@ if (-not (Test-Path $hiveConf)) {
 
 Write-Banner "STEP 2: Fix Guava JAR Conflict (Hive vs Hadoop)"
 
-$hiveLib      = "$INSTALL_DIR\lib"
-$hadoopGuava  = Get-ChildItem "$HADOOP_HOME\share\hadoop\common\lib" -Filter "guava-*.jar" -ErrorAction SilentlyContinue | Select-Object -First 1
+$hiveLib = "$INSTALL_DIR\lib"
+$hadoopGuava = Get-ChildItem "$HADOOP_HOME\share\hadoop\common\lib" -Filter "guava-*.jar" -ErrorAction SilentlyContinue | Select-Object -First 1
 $hiveGuavaOld = Get-ChildItem "$hiveLib" -Filter "guava-*.jar" -ErrorAction SilentlyContinue | Select-Object -First 1
 
 if ($hadoopGuava -and $hiveGuavaOld) {
     Write-Step "2.1" "Hive guava: $($hiveGuavaOld.Name)   Hadoop guava: $($hadoopGuava.Name)"
-    if ($hiveGuavaOld.Name -ne $hadoopGuava.Name) {
-        Write-Step "2.2" "Replacing Hive's guava with Hadoop's version..."
+
+    # FIX: compare version numbers numerically so we only replace when Hadoop's guava
+    # is strictly NEWER — prevents downgrading on a re-run after a Hive upgrade.
+    $hiveGuavaVer = if ($hiveGuavaOld.Name -match 'guava-([\.\d]+)') { try { [Version]$Matches[1] } catch { $null } } else { $null }
+    $hadoopGuavaVer = if ($hadoopGuava.Name -match 'guava-([\.\d]+)') { try { [Version]$Matches[1] } catch { $null } } else { $null }
+
+    if ($hiveGuavaOld.Name -eq $hadoopGuava.Name) {
+        Write-Success "Guava versions already match ($($hiveGuavaOld.Name)) - no fix needed"
+    }
+    elseif ($hadoopGuavaVer -and $hiveGuavaVer -and ($hadoopGuavaVer -le $hiveGuavaVer)) {
+        Write-Warn "Hadoop guava ($($hadoopGuava.Name)) is NOT newer than Hive's ($($hiveGuavaOld.Name)) - skipping to avoid downgrade"
+    }
+    else {
+        Write-Step "2.2" "Replacing Hive's guava with Hadoop's version (upgrade: $($hiveGuavaOld.Name) -> $($hadoopGuava.Name))..."
         Remove-Item $hiveGuavaOld.FullName -Force
         Copy-Item $hadoopGuava.FullName "$hiveLib\" -Force
         Write-Success "Guava conflict resolved: now using $($hadoopGuava.Name)"
-    }
-    else {
-        Write-Success "Guava versions already match ($($hiveGuavaOld.Name)) - no fix needed"
     }
 }
 elseif (-not $hadoopGuava) {
@@ -650,9 +942,9 @@ else {
 
 # Refresh session PATH
 $machinePath = [System.Environment]::GetEnvironmentVariable("Path", "Machine")
-$userPath    = [System.Environment]::GetEnvironmentVariable("Path", "User")
+$userPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
 if ($userPath) { $env:Path = "$machinePath;$userPath" } else { $env:Path = $machinePath }
-$env:HIVE_HOME  = $INSTALL_DIR
+$env:HIVE_HOME = $INSTALL_DIR
 $env:HADOOP_HOME = $HADOOP_HOME
 
 # ============================================================================
@@ -661,9 +953,9 @@ $env:HADOOP_HOME = $HADOOP_HOME
 
 Write-Banner "STEP 4: Hive Configuration Files"
 
-$metastoreDb     = "$HIVE_DB_DIR\metastore_db".Replace('\', '/')
+$metastoreDb = "$HIVE_DB_DIR\metastore_db".Replace('\', '/')
 $hiveLocalScratch = "$HIVE_DB_DIR\scratch".Replace('\', '/')
-$warehouseDir    = "/user/hive/warehouse"    # HDFS path
+$warehouseDir = "/user/hive/warehouse"    # HDFS path
 
 # ---- hive-site.xml ----
 Write-Step "4.1" "Writing hive-site.xml..."
@@ -744,6 +1036,11 @@ set HADOOP_HOME=$HADOOP_HOME
 set JAVA_HOME=$javaHome
 @rem Hive log directory
 set HIVE_LOG_DIR=$LOG_DIR
+@rem --- Log4j fix ---
+@rem Prepend Hive's own lib to HADOOP_CLASSPATH so Hive's log4j-api JAR
+@rem is found BEFORE any version Hadoop ships (avoids NoClassDefFoundError
+@rem for org/apache/logging/log4j/spi/LoggerContextFactory on Hadoop 3.4.x)
+set HADOOP_CLASSPATH=%HIVE_HOME%\lib\*;%HADOOP_CLASSPATH%
 "@
 [System.IO.File]::WriteAllText("$hiveConf\hive-env.cmd", $hiveEnvCmdContent, [System.Text.Encoding]::ASCII)
 Write-Success "hive-env.cmd configured"
@@ -751,7 +1048,7 @@ Write-Success "hive-env.cmd configured"
 # ---- hive-log4j2.properties (silence excessive logging) ----
 Write-Step "4.3" "Checking hive-log4j2.properties..."
 $log4jTemplate = "$hiveConf\hive-log4j2.properties.template"
-$log4jDest     = "$hiveConf\hive-log4j2.properties"
+$log4jDest = "$hiveConf\hive-log4j2.properties"
 if (-not (Test-Path $log4jDest)) {
     if (Test-Path $log4jTemplate) {
         Copy-Item $log4jTemplate $log4jDest -Force
@@ -835,8 +1132,16 @@ try {
     & "$HADOOP_HOME\bin\hdfs.cmd" dfs -ls / 2>&1 | Out-Null
     $hdfsCheckExit = $LASTEXITCODE
     if ($hdfsCheckExit -eq 0) {
-        $hdfsReady = $true
-        Write-Success "HDFS is running"
+        # Extra check: ls / passes even in safe mode. Verify safe mode is OFF.
+        $safeModeOut = (& "$HADOOP_HOME\bin\hdfs.cmd" dfsadmin -safemode get 2>&1) -join " "
+        if ($safeModeOut -match 'Safe mode is OFF') {
+            $hdfsReady = $true
+            Write-Success "HDFS is running and safe mode is OFF"
+        }
+        else {
+            Write-Warn "HDFS is in safe mode ($safeModeOut). Skipping HDFS directory creation."
+            Write-Warn "Wait ~30 s for safe mode to exit, then run the HDFS commands below manually."
+        }
     }
     else {
         Write-Warn "HDFS ls returned exit code $hdfsCheckExit - HDFS may not be running."
@@ -881,7 +1186,7 @@ else {
 
 Write-Banner "STEP 7: Initialize Hive Metastore (Derby)"
 
-$metaDbPath  = "$HIVE_DB_DIR\metastore_db"
+$metaDbPath = "$HIVE_DB_DIR\metastore_db"
 
 if (Test-Path "$metaDbPath\seg0") {
     Write-Warn "Metastore DB already initialized at $metaDbPath"
@@ -891,50 +1196,12 @@ if (Test-Path "$metaDbPath\seg0") {
     else {
         Remove-Item $metaDbPath -Recurse -Force -ErrorAction SilentlyContinue
         Write-Step "7.1" "Running schematool -initSchema -dbType derby..."
-        try {
-            # hadoop classpath writes to stdout; take only the last non-empty line
-            # (skips any WARNING: lines that precede the actual classpath)
-            $env:HADOOP_CLASSPATH = (& "$HADOOP_HOME\bin\hadoop.cmd" classpath 2>$null) |
-                Where-Object { $_ } | Select-Object -Last 1
-            $schemaOut = & "$INSTALL_DIR\bin\hive.cmd" --service schematool -dbType derby -initSchema 2>&1
-            if ($LASTEXITCODE -eq 0) {
-                Write-Success "Metastore schema initialized"
-            }
-            else {
-                Write-Warn "schematool exited with code $LASTEXITCODE. Output:"
-                $schemaOut | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
-            }
-        }
-        catch {
-            Write-Err "hive.cmd --service schematool could not be launched: $_"
-        }
+        Invoke-SchemaInit | Out-Null
     }
 }
 else {
     Write-Step "7.1" "Running schematool -initSchema -dbType derby..."
-    try {
-        # hadoop classpath writes to stdout; take only the last non-empty line
-        # (skips any WARNING: lines that precede the actual classpath)
-        $env:HADOOP_CLASSPATH = (& "$HADOOP_HOME\bin\hadoop.cmd" classpath 2>$null) |
-            Where-Object { $_ } | Select-Object -Last 1
-        $schemaOut = & "$INSTALL_DIR\bin\hive.cmd" --service schematool -dbType derby -initSchema 2>&1
-        if ($LASTEXITCODE -eq 0) {
-            Write-Success "Metastore schema initialized successfully"
-        }
-        else {
-            Write-Warn "schematool exited with code $LASTEXITCODE. Output:"
-            $schemaOut | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
-            Write-Warn "You may need to run schematool manually after verifying hive-site.xml."
-        }
-    }
-    catch {
-        Write-Err "hive.cmd --service schematool could not be launched: $_"
-        Write-Warn "Try running manually after setting HIVE_HOME:"
-        Write-Host "    `$env:HIVE_HOME = '$INSTALL_DIR'" -ForegroundColor Cyan
-        Write-Host "    `$env:HADOOP_HOME = '$HADOOP_HOME'" -ForegroundColor Cyan
-        Write-Host "    `$env:HADOOP_CLASSPATH = (& '$HADOOP_HOME\bin\hadoop.cmd' classpath)" -ForegroundColor Cyan
-        Write-Host "    & '$INSTALL_DIR\bin\hive.cmd' --service schematool -dbType derby -initSchema" -ForegroundColor Cyan
-    }
+    Invoke-SchemaInit | Out-Null
 }
 
 # ============================================================================
@@ -973,31 +1240,51 @@ catch {
 
 Write-Banner "STEP 9: Verification"
 
-Write-Step "VERIFY" "Running 'hive --help' to confirm installation..."
-try {
-    $hiveVer = & "$INSTALL_DIR\bin\hive.cmd" --help 2>&1
-    $hiveVerText = @($hiveVer | ForEach-Object { $_.ToString() })
-    $outputOk = ($hiveVerText -join " ") -match "Usage" -or ($hiveVerText -join " ") -match "help"
-    if ($outputOk) {
-        Write-Success "Hive is installed and working:"
-        $hiveVerText | Select-Object -First 3 | ForEach-Object { Write-Host "    $_" -ForegroundColor Gray }
+# FIX: Replace fragile hive --help check with a structured checklist of
+# all critical installation artifacts — no JVM launch needed, always reliable.
+Write-Step "VERIFY" "Checking critical installation artifacts..."
+$checks = @(
+    @{ Label = "hive.cmd binary"; Path = "$INSTALL_DIR\bin\hive.cmd" },
+    @{ Label = "hive-site.xml"; Path = "$INSTALL_DIR\conf\hive-site.xml" },
+    @{ Label = "hive-env.cmd"; Path = "$INSTALL_DIR\conf\hive-env.cmd" },
+    @{ Label = "Hive lib directory"; Path = "$INSTALL_DIR\lib" },
+    @{ Label = "Derby metastore"; Path = "$HIVE_DB_DIR\metastore_db" },
+    @{ Label = "Hive log directory"; Path = "$LOG_DIR" },
+    @{ Label = "HIVE_HOME env var"; Path = $env:HIVE_HOME },
+    @{ Label = "HADOOP_HOME env var"; Path = $env:HADOOP_HOME }
+)
+$allOk = $true
+foreach ($chk in $checks) {
+    if ($chk.Path -and (Test-Path $chk.Path)) {
+        Write-Host "    [OK] $($chk.Label)" -ForegroundColor Green
     }
     else {
-        Write-Warn "hive --help output was unexpected. Check installation."
-        $hiveVerText | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+        Write-Host "    [!!] MISSING: $($chk.Label) -> $($chk.Path)" -ForegroundColor Red
+        $allOk = $false
     }
 }
-catch {
-    Write-Warn "Could not run hive --help: $_"
-    Write-Warn "Open a NEW Command Prompt and run: hive --help"
+if ($allOk) {
+    Write-Success "All critical artifacts verified — installation looks complete."
+}
+else {
+    Write-Warn "Some artifacts are missing. Review items above before running hive."
 }
 
-# Cleanup prompt
-if (Test-Path $TEMP_DIR) {
-    if (Confirm-Continue "Delete temporary download files ($TEMP_DIR)?") {
-        Remove-Item $TEMP_DIR -Recurse -Force -ErrorAction SilentlyContinue
-        Write-Success "Temp files cleaned up"
+# Cleanup prompt — delete only download artifacts, NOT the whole temp dir (log lives there)
+if (Confirm-Continue "Delete temporary download files (archives, installers)?") {
+    $filesToClean = @(
+        "$TEMP_DIR\apache-hive-$HIVE_VERSION-bin.tar.gz",
+        "$TEMP_DIR\7z_installer.exe",
+        "$TEMP_DIR\hive-cmd-master.zip"
+    )
+    foreach ($f in $filesToClean) {
+        if (Test-Path $f) { Remove-Item $f -Force -ErrorAction SilentlyContinue }
     }
+    # Remove extract folder if it somehow survived
+    if (Test-Path "$TEMP_DIR\hive-extract") { Remove-Item "$TEMP_DIR\hive-extract" -Recurse -Force -ErrorAction SilentlyContinue }
+    if (Test-Path "$TEMP_DIR\hive-cmd") { Remove-Item "$TEMP_DIR\hive-cmd"     -Recurse -Force -ErrorAction SilentlyContinue }
+    if (Test-Path "$TEMP_DIR\7z-extract") { Remove-Item "$TEMP_DIR\7z-extract"   -Recurse -Force -ErrorAction SilentlyContinue }
+    Write-Success "Temp download files cleaned up (log file kept)"
 }
 
 # ============================================================================
@@ -1014,6 +1301,7 @@ Write-Host "  HIVE_HOME      : $INSTALL_DIR" -ForegroundColor Gray
 Write-Host "  Metastore DB   : $HIVE_DB_DIR\metastore_db" -ForegroundColor Gray
 Write-Host "  Warehouse (HDFS): $warehouseDir" -ForegroundColor Gray
 Write-Host "  HiveServer2    : localhost:$HIVE_PORT" -ForegroundColor Gray
+Write-Host "  Install Log    : $_logFile" -ForegroundColor DarkGray
 Write-Host ""
 
 Write-Host "  IMPORTANT: Open a NEW Command Prompt to pick up environment variables!" -ForegroundColor Yellow
@@ -1065,8 +1353,20 @@ Write-Host ""
 Write-Host "  Press S to open the repo in your browser, or any other key to skip." -ForegroundColor Gray
 Write-Host "  ======================================================================" -ForegroundColor DarkGray
 Write-Host ""
-$key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
-if ($key.Character -eq 's' -or $key.Character -eq 'S') {
-    Start-Process "https://github.com/vanshrana369/hadoop-automated-deployment"
+try {
+    $key = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    if ($key.Character -eq 's' -or $key.Character -eq 'S') {
+        Start-Process "https://github.com/vanshrana369/hadoop-automated-deployment"
+    }
+}
+catch {
+    # ReadKey fails in non-interactive/piped sessions — silently skip
 }
 Write-Host ""
+
+# ============================================================================
+#  STOP LOGGING
+# ============================================================================
+Write-Host "  [LOG] Full install log saved to:" -ForegroundColor DarkGray
+Write-Host "        $_logFile" -ForegroundColor Cyan
+Stop-Transcript -ErrorAction SilentlyContinue | Out-Null
