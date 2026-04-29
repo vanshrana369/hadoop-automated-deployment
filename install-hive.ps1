@@ -43,7 +43,7 @@ $INSTALL_DIR = "C:\hive"                          # Where Hive will be installed
 $HIVE_DB_DIR = "$env:USERPROFILE\hive-data"       # Derby metastore + scratch dir (user-owned)
 
 # ============================================================================
-#  LOGGING  — every Write-Host line is saved to a timestamped log file.
+#  LOGGING  â€” every Write-Host line is saved to a timestamped log file.
 #  Start-Transcript must be called early so NOTHING is missed.
 # ============================================================================
 $_logDir = "$env:TEMP\hive-install"
@@ -75,7 +75,7 @@ $_hadoopCandidates = @(
     # Double-nested: C:\hadoop\hadoop\ (parent of bin\, sbin\, share\)
     "C:\hadoop\hadoop",
 
-    # Style 1 — version as a SEPARATE subfolder: C:\hadoop\hadoop\3.4.3
+    # Style 1 â€” version as a SEPARATE subfolder: C:\hadoop\hadoop\3.4.3
     "C:\hadoop\hadoop\3.4.3",
     "C:\hadoop\hadoop\3.4.2",
     "C:\hadoop\hadoop\3.4.1",
@@ -86,7 +86,7 @@ $_hadoopCandidates = @(
     "C:\hadoop\hadoop\3.1.3",
     "C:\hadoop\hadoop\3.1.2",
 
-    # Style 2 — version JOINED to "hadoop" as one folder name: C:\hadoop\hadoop3.4.3
+    # Style 2 â€” version JOINED to "hadoop" as one folder name: C:\hadoop\hadoop3.4.3
     "C:\hadoop\hadoop3.4.3",
     "C:\hadoop\hadoop3.4.2",
     "C:\hadoop\hadoop3.4.1",
@@ -97,8 +97,8 @@ $_hadoopCandidates = @(
     "C:\hadoop\hadoop3.1.3",
     "C:\hadoop\hadoop3.1.2",
 
-    # Style 3 — full package name with dash: C:\hadoop\hadoop-3.4.3
-    # (happens when user extracts the official .tar.gz directly — most common for 3.4.x)
+    # Style 3 â€” full package name with dash: C:\hadoop\hadoop-3.4.3
+    # (happens when user extracts the official .tar.gz directly â€” most common for 3.4.x)
     "C:\hadoop\hadoop-3.4.3",
     "C:\hadoop\hadoop-3.4.2",
     "C:\hadoop\hadoop-3.4.1",
@@ -166,15 +166,13 @@ if (-not $HADOOP_HOME) {
 $LOG_DIR = "$HIVE_DB_DIR\logs"                 # Hive log directory
 
 $TEMP_DIR = "$env:TEMP\hive-install"           # Temporary download directory
-$HIVE_PORT = "10000"                             # HiveServer2 port
-$HIVE_WEB_PORT = "10002"                             # HiveServer2 Web UI port
 
-# Mirror list — verified 2026-04-23 from India (re-verified 13:23 IST).
-# downloads.apache.org returns 404 for EOL releases — removed.
+# Mirror list â€” verified 2026-04-23 from India (re-verified 13:23 IST).
+# downloads.apache.org returns 404 for EOL releases â€” removed.
 $HIVE_URLS = @(
-    # ✔ CONFIRMED WORKING (HTTP 200, 311.8 MB) — Lyra Hosting EU mirror
+    # âœ” CONFIRMED WORKING (HTTP 200, 311.8 MB) â€” Lyra Hosting EU mirror
     "https://mirror.lyrahosting.com/apache/hive/hive-$HIVE_VERSION/apache-hive-$HIVE_VERSION-bin.tar.gz",
-    # ✔ CONFIRMED WORKING (HTTP 200, 311.8 MB) — Apache official archive
+    # âœ” CONFIRMED WORKING (HTTP 200, 311.8 MB) â€” Apache official archive
     "https://archive.apache.org/dist/hive/hive-$HIVE_VERSION/apache-hive-$HIVE_VERSION-bin.tar.gz"
 )
 
@@ -248,7 +246,7 @@ function Confirm-Continue {
 
 # Runs schematool -initSchema and reports results.
 # Returns $true on success, $false on failure.
-# All dependencies passed explicitly — no implicit outer-scope variables.
+# All dependencies passed explicitly â€” no implicit outer-scope variables.
 function Invoke-SchemaInit {
     param(
         [string]$HadoopHome = $HADOOP_HOME,
@@ -287,7 +285,7 @@ function Invoke-SchemaInit {
 
 # Verifies the SHA-256 checksum of a local file against Apache's .sha256 sidecar.
 # Returns $true if verified, $false if .sha256 could not be fetched (soft fail).
-# Calls Exit-Script 1 immediately on a hash mismatch (hard fail — fail-fast).
+# Calls Exit-Script 1 immediately on a hash mismatch (hard fail â€” fail-fast).
 function Test-HiveArchive {
     param(
         [string]  $ArchivePath,
@@ -297,7 +295,7 @@ function Test-HiveArchive {
     foreach ($url in $MirrorUrls) {
         $sha256Url = $url + ".sha256"
         try {
-            # Explicit TLS 1.2 guard — Invoke-WebRequest must not fall back to TLS 1.0
+            # Explicit TLS 1.2 guard â€” Invoke-WebRequest must not fall back to TLS 1.0
             # on older Windows, regardless of what ServicePointManager is set to globally.
             [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
             $shaRaw = (Invoke-WebRequest -Uri $sha256Url -UseBasicParsing -TimeoutSec 15 -ErrorAction Stop).Content
@@ -310,8 +308,8 @@ function Test-HiveArchive {
                 return $true
             }
             else {
-                # Hard fail — tampered or corrupt archive, do not proceed
-                Write-Err "SHA-256 MISMATCH — archive is corrupt or tampered. Deleting and aborting."
+                # Hard fail â€” tampered or corrupt archive, do not proceed
+                Write-Err "SHA-256 MISMATCH â€” archive is corrupt or tampered. Deleting and aborting."
                 Write-Host "  Expected : $expectedHash" -ForegroundColor Red
                 Write-Host "  Actual   : $actualHash"   -ForegroundColor Red
                 Remove-Item $ArchivePath -Force -ErrorAction SilentlyContinue
@@ -668,7 +666,7 @@ if ($doDownload) {
         Write-Host "    Downloading standalone 7-Zip for reliable extraction..." -ForegroundColor Gray
         $7zInstaller = "$TEMP_DIR\7z_installer.exe"
         # FIX: use TEMP_DIR (never has spaces) instead of INSTALL_DIR which could
-        # be set to e.g. "C:\Program Files\hive" — 7-Zip /D= does not support spaces.
+        # be set to e.g. "C:\Program Files\hive" â€” 7-Zip /D= does not support spaces.
         $7zDir = "$TEMP_DIR\7z-extract"
 
         $7zDownloaded = $false
@@ -793,7 +791,7 @@ $commonsJar = "$INSTALL_DIR\lib\commons-collections-3.2.2.jar"
 $commonsMinBytes = 500KB   # actual jar is ~575 KB; 500 KB is a safe floor
 if (-not (Test-Path $commonsJar) -or (Get-Item $commonsJar).Length -lt $commonsMinBytes) {
     if (Test-Path $commonsJar) {
-        Write-Warn "commons-collections jar is too small ($(Format-FileSize (Get-Item $commonsJar).Length)) — likely 0-byte Defender stub. Re-downloading..."
+        Write-Warn "commons-collections jar is too small ($(Format-FileSize (Get-Item $commonsJar).Length)) â€” likely 0-byte Defender stub. Re-downloading..."
         Remove-Item $commonsJar -Force -ErrorAction SilentlyContinue
     }
     Write-Step "1.4" "Fixing missing Apache commons-collections jar (Hive 3.x oversight)..."
@@ -801,7 +799,7 @@ if (-not (Test-Path $commonsJar) -or (Get-Item $commonsJar).Length -lt $commonsM
         Download-WithProgress -Url "https://repo1.maven.org/maven2/commons-collections/commons-collections/3.2.2/commons-collections-3.2.2.jar" -OutFile $commonsJar -DisplayName "commons-collections-3.2.2.jar"
         $dlSize = if (Test-Path $commonsJar) { (Get-Item $commonsJar).Length } else { 0 }
         if ($dlSize -lt $commonsMinBytes) {
-            Write-Warn "Downloaded jar is only $(Format-FileSize $dlSize) — may be quarantined. Hive might fail if commons-collections is missing."
+            Write-Warn "Downloaded jar is only $(Format-FileSize $dlSize) â€” may be quarantined. Hive might fail if commons-collections is missing."
         }
         else {
             Write-Success "Added commons-collections-3.2.2.jar ($(Format-FileSize $dlSize))"
@@ -812,7 +810,8 @@ if (-not (Test-Path $commonsJar) -or (Get-Item $commonsJar).Length -lt $commonsM
     }
 }
 
-# Verify conf dir exists
+
+
 $hiveConf = "$INSTALL_DIR\conf"
 if (-not (Test-Path $hiveConf)) {
     Write-Warn "conf directory missing - creating it now..."
@@ -838,7 +837,7 @@ if ($hadoopGuava -and $hiveGuavaOld) {
     Write-Step "2.1" "Hive guava: $($hiveGuavaOld.Name)   Hadoop guava: $($hadoopGuava.Name)"
 
     # FIX: compare version numbers numerically so we only replace when Hadoop's guava
-    # is strictly NEWER — prevents downgrading on a re-run after a Hive upgrade.
+    # is strictly NEWER â€” prevents downgrading on a re-run after a Hive upgrade.
     $hiveGuavaVer = if ($hiveGuavaOld.Name -match 'guava-([\.\d]+)') { try { [Version]$Matches[1] } catch { $null } } else { $null }
     $hadoopGuavaVer = if ($hadoopGuava.Name -match 'guava-([\.\d]+)') { try { [Version]$Matches[1] } catch { $null } } else { $null }
 
@@ -996,15 +995,7 @@ $hiveSiteContent = @"
     <description>HDFS scratch directory for Hive query execution (must exist on HDFS)</description>
   </property>
 
-  <!-- ===== HiveServer2 ===== -->
-  <property>
-    <name>hive.server2.thrift.port</name>
-    <value>$HIVE_PORT</value>
-  </property>
-  <property>
-    <name>hive.server2.webui.port</name>
-    <value>$HIVE_WEB_PORT</value>
-  </property>
+
 
   <!-- ===== Misc fixes for Windows ===== -->
   <property>
@@ -1041,6 +1032,10 @@ set HIVE_LOG_DIR=$LOG_DIR
 @rem is found BEFORE any version Hadoop ships (avoids NoClassDefFoundError
 @rem for org/apache/logging/log4j/spi/LoggerContextFactory on Hadoop 3.4.x)
 set HADOOP_CLASSPATH=%HIVE_HOME%\lib\*;%HADOOP_CLASSPATH%
+@rem --- Beeline / JDBC fix ---
+@rem beeline.cmd needs hive-jdbc JARs in CLASSPATH to find JdbcUriParseException
+@rem (the HadiFadl Windows CMD wrapper does not set this automatically)
+set CLASSPATH=%HIVE_HOME%\lib\*;%CLASSPATH%
 "@
 [System.IO.File]::WriteAllText("$hiveConf\hive-env.cmd", $hiveEnvCmdContent, [System.Text.Encoding]::ASCII)
 Write-Success "hive-env.cmd configured"
@@ -1061,6 +1056,32 @@ if (-not (Test-Path $log4jDest)) {
 else {
     Write-Success "hive-log4j2.properties already exists"
 }
+
+# ---- 4.4. Hive Windows Bug Fixes ----
+Write-Step "4.4" "Applying Hive Windows compatibility shims..."
+$tempShimDir = "$env:TEMP\hive-shim"
+if (-not (Test-Path $tempShimDir)) { New-Item -ItemType Directory -Path $tempShimDir | Out-Null }
+
+# 1. Fix the missing shaded commons-cli ParseException bug using jarjar
+$shadedJar = "$INSTALL_DIR\lib\commons-cli-shaded-for-hive.jar"
+if (-not (Test-Path $shadedJar)) {
+    Write-Host "  -> Generating missing shaded commons-cli classes..." -ForegroundColor DarkGray
+    $jarjarUrl = "https://repo1.maven.org/maven2/com/googlecode/jarjar/jarjar/1.3/jarjar-1.3.jar"
+    $jarjarDest = "$tempShimDir\jarjar.jar"
+    $rulesDest = "$tempShimDir\rules.txt"
+    Invoke-WebRequest -Uri $jarjarUrl -OutFile $jarjarDest -UseBasicParsing
+    "rule org.apache.commons.cli.** org.apache.hive.org.apache.commons.cli.@1" | Out-File -FilePath $rulesDest -Encoding ASCII
+    & java -jar $jarjarDest process $rulesDest "$INSTALL_DIR\lib\commons-cli-1.2.jar" $shadedJar
+}
+
+# 2. Fix the Hadoop 3.3.x missing htrace-core4 bug
+$htraceJar = "$INSTALL_DIR\lib\htrace-core4-4.1.0-incubating.jar"
+if (-not (Test-Path $htraceJar)) {
+    Write-Host "  -> Downloading missing htrace-core4 (Hadoop 3.3 fix)..." -ForegroundColor DarkGray
+    $htraceUrl = "https://repo1.maven.org/maven2/org/apache/htrace/htrace-core4/4.1.0-incubating/htrace-core4-4.1.0-incubating.jar"
+    Invoke-WebRequest -Uri $htraceUrl -OutFile $htraceJar -UseBasicParsing
+}
+Write-Success "HiveServer2 compatibility shims applied."
 
 # ============================================================================
 #  STEP 5: CREATE LOCAL DATA DIRECTORIES
@@ -1205,43 +1226,13 @@ else {
 }
 
 # ============================================================================
-#  STEP 8: ADD WINDOWS FIREWALL RULES
-# ============================================================================
-
-Write-Banner "STEP 8: Windows Firewall Rules"
-
-try {
-    $existingHS2 = Get-NetFirewallRule -DisplayName "Hive HiveServer2" -ErrorAction SilentlyContinue
-    if (-not $existingHS2) {
-        New-NetFirewallRule -DisplayName "Hive HiveServer2" -Direction Inbound -LocalPort $HIVE_PORT -Protocol TCP -Action Allow -ErrorAction Stop | Out-Null
-        Write-Success "Firewall rule added: port $HIVE_PORT (HiveServer2 Thrift)"
-    }
-    else {
-        Write-Success "Firewall rule already exists: port $HIVE_PORT"
-    }
-
-    $existingHS2Web = Get-NetFirewallRule -DisplayName "Hive HiveServer2 Web UI" -ErrorAction SilentlyContinue
-    if (-not $existingHS2Web) {
-        New-NetFirewallRule -DisplayName "Hive HiveServer2 Web UI" -Direction Inbound -LocalPort $HIVE_WEB_PORT -Protocol TCP -Action Allow -ErrorAction Stop | Out-Null
-        Write-Success "Firewall rule added: port $HIVE_WEB_PORT (HiveServer2 Web UI)"
-    }
-    else {
-        Write-Success "Firewall rule already exists: port $HIVE_WEB_PORT"
-    }
-}
-catch {
-    Write-Warn "Could not add firewall rules: $_"
-    Write-Warn "Localhost access still works. Add rules manually if remote access is needed."
-}
-
-# ============================================================================
-#  STEP 9: VERIFICATION
+#  STEP 8: VERIFICATION
 # ============================================================================
 
 Write-Banner "STEP 9: Verification"
 
 # FIX: Replace fragile hive --help check with a structured checklist of
-# all critical installation artifacts — no JVM launch needed, always reliable.
+# all critical installation artifacts â€” no JVM launch needed, always reliable.
 Write-Step "VERIFY" "Checking critical installation artifacts..."
 $checks = @(
     @{ Label = "hive.cmd binary"; Path = "$INSTALL_DIR\bin\hive.cmd" },
@@ -1264,13 +1255,13 @@ foreach ($chk in $checks) {
     }
 }
 if ($allOk) {
-    Write-Success "All critical artifacts verified — installation looks complete."
+    Write-Success "All critical artifacts verified â€” installation looks complete."
 }
 else {
     Write-Warn "Some artifacts are missing. Review items above before running hive."
 }
 
-# Cleanup prompt — delete only download artifacts, NOT the whole temp dir (log lives there)
+# Cleanup prompt â€” delete only download artifacts, NOT the whole temp dir (log lives there)
 if (Confirm-Continue "Delete temporary download files (archives, installers)?") {
     $filesToClean = @(
         "$TEMP_DIR\apache-hive-$HIVE_VERSION-bin.tar.gz",
@@ -1288,7 +1279,7 @@ if (Confirm-Continue "Delete temporary download files (archives, installers)?") 
 }
 
 # ============================================================================
-#  STEP 10: SUMMARY & NEXT STEPS
+#  STEP 9: SUMMARY & NEXT STEPS
 # ============================================================================
 
 Write-Banner "INSTALLATION COMPLETE!"
@@ -1300,7 +1291,6 @@ Write-Host "  HADOOP_HOME    : $HADOOP_HOME" -ForegroundColor Gray
 Write-Host "  HIVE_HOME      : $INSTALL_DIR" -ForegroundColor Gray
 Write-Host "  Metastore DB   : $HIVE_DB_DIR\metastore_db" -ForegroundColor Gray
 Write-Host "  Warehouse (HDFS): $warehouseDir" -ForegroundColor Gray
-Write-Host "  HiveServer2    : localhost:$HIVE_PORT" -ForegroundColor Gray
 Write-Host "  Install Log    : $_logFile" -ForegroundColor DarkGray
 Write-Host ""
 
@@ -1315,19 +1305,10 @@ Write-Host "  Start YARN     :  " -NoNewline -ForegroundColor Gray
 Write-Host "$HADOOP_HOME\sbin\start-yarn.cmd" -ForegroundColor Green
 Write-Host "  Start HiveShell:  " -NoNewline -ForegroundColor Gray
 Write-Host "hive" -ForegroundColor Green
-Write-Host "  Start HiveServer2:" -NoNewline -ForegroundColor Gray
-Write-Host "  hiveserver2" -ForegroundColor Green
-Write-Host ""
-
-Write-Host "  Connect via Beeline:" -ForegroundColor White
-Write-Host "  ----------------------------------------" -ForegroundColor DarkGray
-Write-Host "  beeline -u jdbc:hive2://localhost:$HIVE_PORT" -ForegroundColor Cyan
 Write-Host ""
 
 Write-Host "  Web UIs:" -ForegroundColor White
 Write-Host "  ----------------------------------------" -ForegroundColor DarkGray
-Write-Host "  HiveServer2 UI :  " -NoNewline -ForegroundColor Gray
-Write-Host "http://localhost:$HIVE_WEB_PORT" -ForegroundColor Cyan
 Write-Host "  NameNode UI    :  " -NoNewline -ForegroundColor Gray
 Write-Host "http://localhost:9870" -ForegroundColor Cyan
 Write-Host ""
@@ -1360,7 +1341,7 @@ try {
     }
 }
 catch {
-    # ReadKey fails in non-interactive/piped sessions — silently skip
+    # ReadKey fails in non-interactive/piped sessions â€” silently skip
 }
 Write-Host ""
 
@@ -1370,3 +1351,4 @@ Write-Host ""
 Write-Host "  [LOG] Full install log saved to:" -ForegroundColor DarkGray
 Write-Host "        $_logFile" -ForegroundColor Cyan
 Stop-Transcript -ErrorAction SilentlyContinue | Out-Null
+
